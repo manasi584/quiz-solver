@@ -1,0 +1,10 @@
+[{
+  "email": "your-email@example.com",
+  "secret": "replace_with_your_secret",
+  "url": "https://tds-llm-analysis.s-anand.net/demo"
+},
+{
+  "email": "your email", 
+  "secret": "your secret", 
+  "url": "https://example.com/quiz-834"
+}]
