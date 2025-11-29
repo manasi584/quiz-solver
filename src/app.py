@@ -11,6 +11,7 @@ import json
 import tempfile
 import os
 import requests
+from llm_helper import LLMHelper
 
 try:
     import pandas as pd
@@ -40,35 +41,8 @@ def get_data_content(url):
     return r.text[:10000]  
 
 def analyze_with_llm(content, question):
-    url = os.getenv('AIPIPE_URL', 'https://aipipe.org/openrouter/v1/responses')
-    token = os.getenv('AIPIPE_TOKEN')
-    
-    prompt = f"""Analyze this data and answer the question. Return ONLY a JSON object with an 'answer' field containing the numeric result or string answer.
-
-Data:
-{content}
-
-Question: {question}
-
-Response (JSON only):"""
-    
-    payload = {
-        "model": "openai/gpt-5-mini",
-        "input": prompt
-    }
-    
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}"
-    }
-    
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        result = response.json()['output'].strip()
-        return json.loads(result)
-    except Exception as e:
-        return {'error': f'LLM analysis failed: {str(e)}'}
+    llm = LLMHelper()
+    return llm.analyze_data(content, question)
 
 def main():
     try:

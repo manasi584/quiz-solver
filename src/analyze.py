@@ -1,83 +1,80 @@
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "pandas",
-#     "requests",
-# ]
-# ///
+import sys
+import pandas as pd
+import PyPDF2
+import re
 
-import sys, json
-import tempfile
-import os
+def analyze_file(file_path, task_description):
+    """Analyze file based on task description and return answer"""
+    
+    if file_path.endswith('.pdf'):
+        return analyze_pdf(file_path, task_description)
+    elif file_path.endswith(('.csv', '.xlsx', '.xls')):
+        return analyze_spreadsheet(file_path, task_description)
+    
+    return None
 
-from pathlib import Path
-
-try:
-    import pandas as pd
-except Exception as e:
-    print(json.dumps({'error': 'pandas not installed: ' + str(e)}))
-    sys.exit(1)
-
-import requests
-
-def answer_for_csv_from_url(url, question_text):
-    r = requests.get(url)
-    r.raise_for_status()
-    tmp = tempfile.NamedTemporaryFile(delete=False)
-    tmp.write(r.content)
-    tmp.flush()
-    tmp.close()
+def analyze_pdf(file_path, task_description):
+    """Extract data from PDF and perform analysis"""
     try:
-        # try read as csv or excel
-        try:
-            df = pd.read_csv(tmp.name)
-        except Exception:
-            df = pd.read_excel(tmp.name)
-
-        # Heuristic: if question mentions 'sum' and column name in quotes, find it
-        import re
-        m = re.search(r"sum of the \"([^\"]+)\" column", question_text, re.I)
-        if m:
-            col = m.group(1)
-            if col in df.columns:
-                s = df[col].sum()
-                return {'answer': float(s)}
-
-        # fallback: if there is a column named 'value' sum it
-        if 'value' in df.columns:
-            return {'answer': float(df['value'].sum())}
-
-        # else return descriptive stats
-        stats = df.describe().to_dict()
-        return {'answer': stats}
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except:
-            pass
-
-def main():
-    inp = sys.stdin.read()
-    try:
-        payload = json.loads(inp)
+        with open(file_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+            
+            # Extract text from specified page or all pages
+            page_num = extract_page_number(task_description)
+            if page_num and page_num <= len(reader.pages):
+                text = reader.pages[page_num - 1].extract_text()
+            else:
+                text = ' '.join(page.extract_text() for page in reader.pages)
+            
+            # Look for table data and sum values
+            if 'sum' in task_description.lower() and 'value' in task_description.lower():
+                return sum_values_from_text(text)
+                
     except Exception as e:
-        print(json.dumps({'error': 'invalid json input to python analyze: ' + str(e)}))
-        sys.exit(1)
+        print(f"PDF analysis error: {e}", file=sys.stderr)
+    
+    return None
 
-    url = payload.get('url')
-    analysisSpec = payload.get('analysisSpec', {})
-    question = analysisSpec.get('questionText', '')
-
-    if not url:
-        print(json.dumps({'error': 'no url provided'}))
-        sys.exit(1)
-
+def analyze_spreadsheet(file_path, task_description):
+    """Analyze CSV/Excel file"""
     try:
-        res = answer_for_csv_from_url(url, question)
-        print(json.dumps(res))
+        if file_path.endswith('.csv'):
+            df = pd.read_csv(file_path)
+        else:
+            df = pd.read_excel(file_path)
+        
+        # Sum values in 'value' column if requested
+        if 'sum' in task_description.lower() and 'value' in df.columns:
+            return int(df['value'].sum())
+            
     except Exception as e:
-        print(json.dumps({'error': str(e)}))
-        sys.exit(1)
+        print(f"Spreadsheet analysis error: {e}", file=sys.stderr)
+    
+    return None
 
-if __name__ == '__main__':
-    main()
+def extract_page_number(text):
+    """Extract page number from task description"""
+    match = re.search(r'page\s+(\d+)', text, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+def sum_values_from_text(text):
+    """Extract and sum numeric values from text"""
+    # Look for table-like patterns with numbers
+    numbers = re.findall(r'\b\d+(?:\.\d+)?\b', text)
+    if numbers:
+        return int(sum(float(n) for n in numbers))
+    return None
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python analyze.py <file_path> <task_description>")
+        sys.exit(1)
+    
+    file_path = sys.argv[1]
+    task_description = sys.argv[2]
+    
+    result = analyze_file(file_path, task_description)
+    if result is not None:
+        print(result)
+    else:
+        print("0")  # Default fallback
