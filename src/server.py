@@ -2,6 +2,7 @@ import os
 import asyncio
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
 import uvicorn
 from dotenv import load_dotenv
@@ -10,6 +11,14 @@ from solver import solve_task
 load_dotenv()
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class QuizRequest(BaseModel):
     email: str

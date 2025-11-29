@@ -11,35 +11,12 @@ class LLMHelper:
         self.model = model
         self.timeout = timeout
     
-    def _call_llm(self, prompt, system_prompt="You are a helpful quiz solver agent that responds only in valid JSON format.", use_schema=False):
-        response_format = {"type": "json_object"}
-        if use_schema:
-            response_format = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "task_extraction",
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "INSTRUCTIONS": {
-                                "type": "array",
-                                "items": {"type": "string"}
-                            },
-                            "URLS": {
-                                "type": "array",
-                                "items": {"type": "string"}
-                            },
-                            "SUBMIT_URL": {"type": "string"}
-                        },
-                        "required": ["INSTRUCTIONS", "URLS", "SUBMIT_URL"],
-                        "additionalProperties": False
-                    }
-                }
-            }
-        
+ 
+    
+    def _call_llm(self, input_text, response_format={"type": "json_object"}):
         payload = {
             "model": self.model,
-            "input": f"{system_prompt}\n\n{prompt}",
+            "input": input_text,
             "response_format": response_format
         }
         
@@ -53,55 +30,11 @@ class LLMHelper:
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
             print(f"HTTP Error: {e}")
-            # print(f"Response content: {response.text}")
-            # print(f"Payload sent: {json.dumps(payload, indent=2)}")
+            print(f"Response content: {response.text}")
+            print(f"Payload sent: {json.dumps(payload, indent=2)}")
             raise
         result = response.json()
         return result
-    
-    def analyze_data(self, content, question):
-        prompt = f"""Analyze this data and answer the question. Return ONLY a JSON object with an 'answer' field containing the numeric result or string answer.
-
-Data:
-{content}
-
-Question: {question}
-
-Response (JSON only):"""
-        
-        try:
-            result = self._call_llm(prompt)
-            return json.loads(result)
-        except Exception as e:
-            return {'error': f'Data analysis failed: {str(e)}'}
-    
-    def find_submit_url(self, page_content, page_html):
-        # First try regex for common patterns
-        submit_match = re.search(r'POST this JSON to[^\n]*?([^\s<>"\']+/submit)', page_content)
-        if submit_match:
-            return submit_match.group(1)
-        
-        prompt = f"""Find the submit URL from this webpage content. Look for forms, links, or any URLs where quiz answers should be submitted.
-
-Page Text:
-{page_content[:2000]}
-
-Page HTML (partial):
-{page_html[:3000]}
-
-Return ONLY a JSON object with 'submit_url' field containing the URL, or 'error' if not found:"""
-        
-        try:
-            result = self._call_llm(prompt)
-            parsed = json.loads(result)
-            return parsed.get('submit_url')
-        except Exception as e:
-            # Fallback: extract URLs with regex
-            urls = re.findall(r'https?://[^\s<>"\']+', page_html)
-            for url in urls:
-                if any(word in url.lower() for word in ["submit", "answer", "post", "check"]):
-                    return url
-            return None
     
     def solve_complex_task(self, page_content, page_html, scraped_data=None):
         """Solve complex tasks: scraping, API calls, data processing, analysis, visualization"""
@@ -130,51 +63,11 @@ Return JSON with:
 """
         
         try:
-            result = self._call_llm(prompt)
+            result = self._call_llm(f"You are a helpful quiz solver agent.\n\n{prompt}")
             return json.loads(result)
         except Exception as e:
             return {'error': f'Complex task analysis failed: {str(e)}'}
-    
-    def process_scraped_data(self, data, task_instructions):
-        """Process scraped data according to task requirements"""
-        prompt = f"""Process this scraped data according to the task instructions:
 
-Task Instructions:
-{task_instructions}
-
-Scraped Data:
-{data}
-
-Perform the required processing (cleansing, transformation, analysis, etc.) and return JSON with 'answer' field:"""
-        
-        try:
-            result = self._call_llm(prompt)
-            return json.loads(result)
-        except Exception as e:
-            return {'error': f'Data processing failed: {str(e)}'}
-    
-    def generate_api_request(self, task_instructions, base_url=None):
-        """Generate API request details from task instructions"""
-        prompt = f"""Generate API request details from these instructions:
-
-Instructions:
-{task_instructions}
-
-{f'Base URL: {base_url}' if base_url else ''}
-
-Return JSON with:
-- 'url': API endpoint URL
-- 'method': HTTP method
-- 'headers': required headers dict
-- 'params': query parameters dict (if any)
-- 'data': request body (if any)
-"""
-        
-        try:
-            result = self._call_llm(prompt)
-            return json.loads(result)
-        except Exception as e:
-            return {'error': f'API request generation failed: {str(e)}'}
 
     async def extract_task_with_llm(self, html_content):
         prompt = f"""
@@ -191,42 +84,150 @@ Return JSON with:
         {html_content}
         """
         try:
-            result = self._call_llm(prompt, use_schema=True)
-            # print(result)
-            return result 
+            schema_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "task_extraction",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "INSTRUCTIONS": {"type": "array", "items": {"type": "string"}},
+                            "URLS": {"type": "array", "items": {"type": "string"}},
+                            "SUBMIT_URL": {"type": "string"}
+                        },
+                        "required": ["INSTRUCTIONS", "URLS", "SUBMIT_URL"],
+                        "additionalProperties": False
+                    }
+                }
+            }
+            result = self._call_llm(f"You are a helpful quiz solver agent.\n\n{prompt}", schema_format)
+            return json.loads(self.extract_llm_response(result)) 
         except Exception as e:
             print(f"LLM call failed: {e}")
-            try:
-                result = self._call_llm(prompt, use_schema=False)
-                return result
-            except:
-                return None
+            return None
 
     async def categorize_task(self, task_text):
-        prompt = f"""Categorize this task into one of these types:
+        prompt = f"""Categorize these intructions for a task into one of these types:
 - math: mathematical calculations, sums, arithmetic
 - data_analysis: file analysis, CSV/PDF processing, data extraction
 - text_processing: text manipulation, string operations
 - logic: logical reasoning, pattern matching
 - web_scraping: extracting data from web pages
-- unknown: cannot determine
+- other: cannot determine
 
 Task: {task_text}
 
 Return JSON with 'category' field."""
         try:
-            result = self._call_llm(prompt)
-            parsed = json.loads(result)
-            return parsed.get('category', 'unknown').strip().lower()
-        except:
+            schema_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "task_category",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "category": {"type": "string"}
+                        },
+                        "required": ["category"],
+                        "additionalProperties": False
+                    }
+                }
+            }
+            result = self._call_llm(f"You are a helpful quiz solver agent.\n\n{prompt}", schema_format)
+            parsed = json.loads(self.extract_llm_response(result))
+            # print(f"LLM response: {parsed}")
+            return parsed.get('category', 'other').strip().lower()
+        except Exception as e:
+            print(f"categorize_task failed: {e}")
             return 'unknown'
 
-    async def solve_with_llm(self, task_text):
-        """Solve task directly using LLM"""
-        prompt = f"""Solve this task and return the numeric answer in JSON format:\n\n{task_text}\n\nReturn JSON with 'answer' field containing the number."""
+    async def process_urls(self, urls, instructions):
+        prompt = f"""Given these URLs and task instructions, determine what needs to be done with each URL.
+        
+URLs: {urls}
+Instructions: {instructions}
+        
+For each URL, determine the action needed:
+- DOWNLOAD: if URL contains data files (PDF, CSV, Excel, etc.)
+- API: if URL is an API endpoint that needs a request
+- DONE: if URL has no functionality and doesn't need exploration
+- SCRAPE: if URL needs web scraping for data extraction
+
+Return JSON with each URL as key and the required action as value."""
+        
         try:
-            result = self._call_llm(prompt)
-            parsed = json.loads(result)
-            return int(parsed.get('answer', 0))
-        except:
+            schema_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "url_processing",
+                    "schema": {
+                        "type": "object",
+                        "patternProperties": {
+                            "^https?://.*": {
+                                "type": "string",
+                                "enum": ["DOWNLOAD", "API", "DONE", "SCRAPE"]
+                            }
+                        },
+                        "additionalProperties": False
+                    }
+                }
+            }
+            result = self._call_llm(f"You are a helpful quiz solver agent.\n\n{prompt}", schema_format)
+            return json.loads(self.extract_llm_response(result))
+        except Exception as e:
+            print(f"process_urls failed: {e}")
             return None
+    
+    async def solve_with_llm(self, instructions,category, urls_content=None):
+        prompt = f"""Solve this task and return the answer in JSON format:\n\n{instructions}. 
+        The task belongs to category {category}"""
+        
+        if urls_content:
+            prompt += "\n\nAdditional data from URLs:\n"
+            for url, content in urls_content.items():
+                if isinstance(content, str) and content.startswith("Downloaded to:"):
+                    filepath = content.replace("Downloaded to: ", "")
+                    try:
+                        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                            file_content = f.read()[:5000]  # Limit to first 5000 chars
+                        prompt += f"\n{url} (file content):\n{file_content}\n"
+                    except:
+                        prompt += f"\n{url}: {content}\n"
+                else:
+                    prompt += f"\n{url}:\n{str(content)[:5000]}\n"
+            prompt += "\n\nNote: You have been provided with all necessary data from external websites and files above. Do not attempt to access external URLs or download files as the data is already included in this prompt."
+        
+        try:
+            schema_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "task_answer",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "answer": {"type": "string"}
+                        },
+                        "required": ["answer"],
+                        "additionalProperties": False
+                    }
+                }
+            }
+            result = self._call_llm(f"You are a helpful quiz solver agent.\n\n{prompt}", schema_format)
+            parsed = self.extract_llm_response(result)
+            print(parsed)
+            return parsed
+        except Exception as e:
+            print(f"solve_with_llm failed: {e}")
+            return None
+
+    def extract_llm_response(self, llm_result):
+        if not llm_result:
+            return ''
+        try:
+            if 'output' in llm_result and len(llm_result['output']) > 1:
+                content = llm_result['output'][1].get('content', [])
+                if content and len(content) > 0:
+                    return content[0].get('text', '')
+        except (KeyError, IndexError, TypeError) as e:
+            print(f"Error extracting LLM response: {e}")
+        return ''

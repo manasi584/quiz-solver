@@ -23,13 +23,12 @@ async def solve_task(email: str, secret: str, url: str):
             task_text = await extract_task_from_page(page)
         
             if task_text:
-                task_data = json.loads(task_text)
+                task_data = task_text
                 submit_url = task_data.get("SUBMIT_URL")
-                print("Submit URL:", submit_url)
+                # print("Submit URL:", submit_url)
+                urls=task_data.get("URLS", [])
                 instructions = task_data.get("INSTRUCTIONS", [])
-                task_text = " ".join(instructions) if isinstance(instructions, list) else str(instructions)
-                
-                answer = await process_task(task_text)
+                answer = await process_task(instructions,urls)
                 print("Answer:", answer)
                 
                 if submit_url and answer is not None:
@@ -49,160 +48,60 @@ async def extract_task_from_page(page):
         page_html = await page.content()
         llm = LLMHelper()
         llm_result = await llm.extract_task_with_llm(page_html)
-        # print("llm result : ",llm_result)
         if llm_result:
-            # Extract the JSON text from the response
-            extracted_text = extract_llm_response(llm_result)
-            return extracted_text
+            return llm_result
     except Exception as e:
         print(f"LLM extraction failed: {e}")
     return None
 
+async def process_urls_content(urls_actions):
+    """Process URLs based on their action values"""
+    processed_data = {}
+    download_folder = "downloads"
+    os.makedirs(download_folder, exist_ok=True)
+    
+    async with aiohttp.ClientSession() as session:
+        for url, action in urls_actions.items():
+            try:
+                if action == "DOWNLOAD":
+                    async with session.get(url) as resp:
+                        if resp.status == 200:
+                            filename = url.split('/')[-1] or f"file_{hash(url)}"
+                            filepath = os.path.join(download_folder, filename)
+                            with open(filepath, 'wb') as f:
+                                f.write(await resp.read())
+                            processed_data[url] = f"Downloaded to: {filepath}"
+                elif action == "SCRAPE":
+                    async with session.get(url) as resp:
+                        if resp.status == 200:
+                            processed_data[url] = await resp.text()
+                elif action == "API":
+                    async with session.get(url) as resp:
+                        if resp.status == 200:
+                            processed_data[url] = await resp.json()
+                elif action == "DONE":
+                    processed_data[url] = "No action needed"
+            except Exception as e:
+                print(f"Error processing {url}: {e}")
+                processed_data[url] = f"Error: {str(e)}"
+    
+    return processed_data
 
-def extract_llm_response(llm_result):
-    if not llm_result:
-        return ''
-    try:
-        if 'output' in llm_result and len(llm_result['output']) > 1:
-            content = llm_result['output'][1].get('content', [])
-            if content and len(content) > 0:
-                return content[0].get('text', '')
-    except (KeyError, IndexError, TypeError) as e:
-        print(f"Error extracting LLM response: {e}")
-    return ''
-
-# def extract_submit_url(text):
-#     # Look for submit URL pattern
-#     match = re.search(r'Post.*?to\s+(https?://[^\s<]+)', text, re.IGNORECASE)
-#     return match.group(1) if match else None
-
-async def process_task(task_text):
-    # Categorize task using LLM
+async def process_task(instructions, urls):
     try:
         llm = LLMHelper()
-        category = await llm.categorize_task(task_text)
-        # print(f"Task category: {category}")
+        category = await llm.categorize_task(instructions)
+        print(f"Task category: {category}")
         
-        # Route to appropriate solver
-        if category == 'data_analysis':
-            return await solve_data_analysis(task_text)
-        elif category == 'math':
-            return await solve_math(task_text)
-        elif category == 'text_processing':
-            return await solve_text_processing(task_text)
-        elif category == 'logic':
-            return await solve_logic(task_text)
-        else:
-            return await llm.solve_with_llm(task_text)
+        urls_content = None
+        if urls:
+            urls_actions = await llm.process_urls(urls, instructions)
+            if urls_actions:
+                urls_content = await process_urls_content(urls_actions)
+        
+            return await llm.solve_with_llm(instructions,category,urls_content)
     except Exception as e:
         print(f"Categorization failed: {e}")
-
-async def process_file_task(task_text, file_urls):
-    import subprocess
-    import tempfile
-    
-    try:
-        for file_url in file_urls:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(file_url) as resp:
-                    if resp.status == 200:
-                        content = await resp.read()
-                        
-                        # Save to temp file
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as f:
-                            f.write(content)
-                            temp_path = f.name
-                        
-                        # Call Python analyzer
-                        result = subprocess.run([
-                            'python', '../python_worker/analyze.py', 
-                            temp_path, task_text
-                        ], capture_output=True, text=True, cwd='/Users/manasiq/Downloads/quiz-solver/src')
-                        
-                        if result.returncode == 0:
-                            return int(result.stdout.strip())
-    except Exception as e:
-        print(f"File processing error: {e}")
-    
-    return None
-
-async def solve_data_analysis(task_text):
-    import subprocess
-    import tempfile
-    
-    # Extract file URLs
-    file_matches = re.findall(r'href="([^"]+\.(pdf|csv|xlsx?))"', task_text)
-    
-    if file_matches:
-        file_urls = [match[0] for match in file_matches]
-        
-        # Try LLM + Python combination
-        for file_url in file_urls:
-            try:
-                # Download file
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(file_url) as resp:
-                        if resp.status == 200:
-                            content = await resp.read()
-                            
-                            # Save to temp file
-                            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as f:
-                                f.write(content)
-                                temp_path = f.name
-                            
-                            # First try Python analyzer
-                            result = subprocess.run([
-                                'python', '../python_worker/analyze.py', 
-                                temp_path, task_text
-                            ], capture_output=True, text=True, cwd='/Users/manasiq/Downloads/quiz-solver/src')
-                            
-                            if result.returncode == 0 and result.stdout.strip():
-                                return int(result.stdout.strip())
-                            
-                            # Fallback to LLM analysis
-                            llm = LLMHelper()
-                            with open(temp_path, 'rb') as f:
-                                file_content = f.read()[:5000]  # First 5KB
-                            
-                            llm_result = llm.analyze_data(str(file_content), task_text)
-                            if 'answer' in llm_result:
-                                return int(llm_result['answer'])
-                                
-            except Exception as e:
-                print(f"File processing error: {e}")
-    
-    # No files found, try LLM direct analysis
-    llm = LLMHelper()
-    return await llm.solve_with_llm(task_text)
-
-async def solve_math(task_text):
-    numbers = re.findall(r'\b\d+\b', task_text)
-    if 'sum' in task_text.lower() and numbers:
-        return sum(int(n) for n in numbers)
-    elif 'product' in task_text.lower() and numbers:
-        result = 1
-        for n in numbers:
-            result *= int(n)
-        return result
-    llm = LLMHelper()
-    return await llm.solve_with_llm(task_text)
-
-async def solve_text_processing(task_text):
-    if 'count' in task_text.lower():
-        words = re.findall(r'\b\w+\b', task_text)
-        return len(words)
-    llm = LLMHelper()
-    return await llm.solve_with_llm(task_text)
-
-async def solve_logic(task_text):
-    llm = LLMHelper()
-    return await llm.solve_with_llm(task_text)
-
-async def process_text_task(task_text):
-    numbers = re.findall(r'\b\d+\b', task_text)
-    if numbers and 'sum' in task_text.lower():
-        return sum(int(n) for n in numbers)
-    return None
 
 async def submit_answer(submit_url, email, secret, original_url, answer):
     payload = {
@@ -211,8 +110,12 @@ async def submit_answer(submit_url, email, secret, original_url, answer):
         "url": original_url,
         "answer": answer
     }
+    # print(f"Submitting answer: {payload}")
     
     async with aiohttp.ClientSession() as session:
         async with session.post(submit_url, json=payload) as resp:
             print(f"Submit response: {resp.status}")
+            if resp.status != 200:
+                response_text = await resp.text()
+                print(f"Error response: {response_text}")
             return resp.status == 200
