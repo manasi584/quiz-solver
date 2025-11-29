@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
 import uvicorn
 from dotenv import load_dotenv
-from solver import solve_task
+from .solver import solve_task
 
 load_dotenv()
 

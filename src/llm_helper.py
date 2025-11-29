@@ -5,11 +5,10 @@ import aiohttp
 import re
 
 class LLMHelper:
-    def __init__(self, model="openai/gpt-5-mini", timeout=30):
+    def __init__(self, model="openai/gpt-5-mini"):
         self.url = "https://aipipe.org/openrouter/v1/responses"
         self.token = os.getenv('AIPIPE_TOKEN')
         self.model = model
-        self.timeout = timeout
     
  
     
@@ -26,7 +25,7 @@ class LLMHelper:
         }
         
         try:
-            response = requests.post(self.url, headers=headers, json=payload, timeout=self.timeout)
+            response = requests.post(self.url, headers=headers, json=payload)
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
             print(f"HTTP Error: {e}")

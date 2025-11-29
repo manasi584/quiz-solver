@@ -6,8 +6,8 @@ import aiohttp
 import os
 import html
 from playwright.async_api import async_playwright
-from llm_helper import LLMHelper
-from utils import string_to_json
+from .llm_helper import LLMHelper
+
 
 
 
@@ -110,12 +110,17 @@ async def submit_answer(submit_url, email, secret, original_url, answer):
         "url": original_url,
         "answer": answer
     }
-    # print(f"Submitting answer: {payload}")
     
     async with aiohttp.ClientSession() as session:
         async with session.post(submit_url, json=payload) as resp:
             print(f"Submit response: {resp.status}")
-            if resp.status != 200:
+            if resp.status == 200:
+                response_data = await resp.json()
+                if response_data.get("correct") and "url" in response_data:
+                    next_url = response_data["url"]
+                    if next_url != original_url:
+                        await solve_task(email, secret, next_url)
+            else:
                 response_text = await resp.text()
                 print(f"Error response: {response_text}")
             return resp.status == 200

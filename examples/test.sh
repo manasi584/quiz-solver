@@ -5,7 +5,7 @@ curl -X POST "http://localhost:3000/solve" \
   -d '{
   "email": "your-email@example.com",
   "secret": "secret1",
-  "url": "http://127.0.0.1:5500/examples/sampleQuestion.html"
+  "url": "https://tds-llm-analysis.s-anand.net/demo"
 }'
 
 echo "Request sent!"
